@@ -104,26 +104,29 @@ def load_vectorstore(uploaded_pdf, namespace):
     docs = PyPDFLoader(pdf_path).load()
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=300,
+        chunk_size=800,
+        chunk_overlap=200,   # reduced overlap (important)
         separators=["\n\n", "\n", ". ", " ", ""]
     )
 
     chunks = splitter.split_documents(docs)
 
-    return PineconeVectorStore.from_documents(
-        documents=chunks,
-        embedding=embeddings,
+    # Create empty vectorstore first
+    vectorstore = PineconeVectorStore(
         index_name=INDEX_NAME,
+        embedding=embeddings,
         namespace=namespace
     )
 
-vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
+    # Batch upload to prevent memory crash
+    batch_size = 100
 
-retriever = vectorstore.as_retriever(
-    search_type="mmr",
-    search_kwargs={"k": 4, "fetch_k": 10}
-)
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        vectorstore.add_documents(batch)
+
+    return vectorstore
+
 
 # --------------------------------------------------
 # LLM
