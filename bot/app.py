@@ -35,8 +35,8 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-INDEX_NAME = "new-bot"
-EMBEDDING_DIM = 768
+INDEX_NAME = "new-bot-1024"
+EMBEDDING_DIM = 1024   # IMPORTANT: gte-large = 1024
 
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.error("Missing API keys.")
@@ -47,7 +47,9 @@ if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
 # --------------------------------------------------
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
+existing_indexes = [i["name"] for i in pc.list_indexes()]
+
+if INDEX_NAME not in existing_indexes:
     pc.create_index(
         name=INDEX_NAME,
         dimension=EMBEDDING_DIM,
@@ -87,12 +89,12 @@ if st.session_state.active_pdf != pdf_namespace:
     st.cache_resource.clear()
 
 # --------------------------------------------------
-# VECTORSTORE
+# VECTORSTORE WITH GTE-LARGE
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
+        model_name="thenlper/gte-large"
     )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -118,7 +120,6 @@ def load_vectorstore(uploaded_pdf, namespace):
 
 vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
 
-# Reduced retrieval for cleaner citations
 retriever = vectorstore.as_retriever(
     search_type="mmr",
     search_kwargs={"k": 4, "fetch_k": 10}
@@ -153,8 +154,7 @@ prompt = ChatPromptTemplate.from_messages(
             "3. NEVER use outside knowledge.\n"
             "4. If not found, respond EXACTLY: "
             "'I cannot find this information in the document.'\n"
-            "5. Do NOT mention chunks or context.\n"
-            "6. Do NOT add page numbers in the answer.\n"
+            "5. Do NOT add page numbers inside the answer.\n"
         ),
         ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
     ]
@@ -185,7 +185,6 @@ def answer_question(question):
 
     answer = response.content.strip()
 
-    # Clean unwanted artifacts
     answer = re.sub(r"\[Page \d+\]", "", answer).strip()
 
     not_found_phrases = [
@@ -199,7 +198,6 @@ def answer_question(question):
     if any(phrase in answer.lower() for phrase in not_found_phrases):
         return "I cannot find this information in the document."
 
-    # Clean duplicate pages and limit to top 2
     unique_pages = sorted(set(page_numbers))[:2]
 
     source_info = f"\n\n📄 Source: Page(s) {', '.join(map(str, unique_pages))}"
