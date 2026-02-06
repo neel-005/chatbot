@@ -1,6 +1,6 @@
-# -------------------------------
+# -----------------------------------
 # IMPORTS
-# -------------------------------
+# -----------------------------------
 import os
 import re
 import tempfile
@@ -18,9 +18,9 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone
 
-# -------------------------------
+# -----------------------------------
 # PAGE CONFIG
-# -------------------------------
+# -----------------------------------
 st.set_page_config(
     page_title="PDF Q&A Bot",
     page_icon="📄",
@@ -30,37 +30,40 @@ st.set_page_config(
 st.title("PDF Question Answering Bot")
 st.caption("Answers are based only on the uploaded document")
 
-# -------------------------------
+# -----------------------------------
 # LOAD ENV
-# -------------------------------
+# -----------------------------------
 load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-INDEX_NAME = "new-bot-gte"
-EMBEDDING_DIM = 1024  # gte-large dimension
+INDEX_NAME = "new-bot-gte-base"
+EMBEDDING_DIM = 768  # gte-base dimension
 
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.error("Missing API keys.")
     st.stop()
 
-# -------------------------------
+# -----------------------------------
 # PINECONE CONNECT
-# -------------------------------
+# -----------------------------------
 try:
     pc = Pinecone(api_key=PINECONE_API_KEY)
     index = pc.Index(INDEX_NAME)
 except Exception:
     st.error(
-        f"Index '{INDEX_NAME}' not found. Create it manually with:\n"
-        "Dimension: 1024\nMetric: cosine\nCloud: AWS"
+        f"Index '{INDEX_NAME}' not found.\n\n"
+        "Create it manually with:\n"
+        "- Dimension: 768\n"
+        "- Metric: cosine\n"
+        "- Cloud: AWS"
     )
     st.stop()
 
-# -------------------------------
+# -----------------------------------
 # SIDEBAR
-# -------------------------------
+# -----------------------------------
 with st.sidebar:
     uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
 
@@ -72,19 +75,19 @@ if not uploaded_pdf:
     st.info("Upload a PDF to begin.")
     st.stop()
 
-# -------------------------------
-# SESSION NAMESPACE
-# -------------------------------
+# -----------------------------------
+# NAMESPACE
+# -----------------------------------
 pdf_namespace = uploaded_pdf.name.replace(" ", "_").lower()
 
-# -------------------------------
-# VECTORSTORE LOADER (BATCH SAFE)
-# -------------------------------
+# -----------------------------------
+# VECTORSTORE (LIGHTWEIGHT SAFE)
+# -----------------------------------
 @st.cache_resource(show_spinner=True)
 def load_vectorstore(uploaded_pdf, namespace):
 
     embeddings = HuggingFaceEmbeddings(
-        model_name="thenlper/gte-large"
+        model_name="thenlper/gte-base"
     )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -94,8 +97,8 @@ def load_vectorstore(uploaded_pdf, namespace):
     docs = PyPDFLoader(pdf_path).load()
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=200,
+        chunk_size=600,
+        chunk_overlap=150,
         separators=["\n\n", "\n", ". ", " ", ""]
     )
 
@@ -107,12 +110,7 @@ def load_vectorstore(uploaded_pdf, namespace):
         namespace=namespace
     )
 
-    # Check if namespace already has vectors
-    stats = index.describe_index_stats()
-    if namespace in stats.get("namespaces", {}):
-        return vectorstore  # already embedded
-
-    batch_size = 100
+    batch_size = 50  # smaller batch for stability
 
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
@@ -121,9 +119,9 @@ def load_vectorstore(uploaded_pdf, namespace):
     return vectorstore
 
 
-# -------------------------------
+# -----------------------------------
 # LOAD VECTORSTORE + RETRIEVER
-# -------------------------------
+# -----------------------------------
 vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
 
 retriever = vectorstore.as_retriever(
@@ -131,24 +129,21 @@ retriever = vectorstore.as_retriever(
     search_kwargs={"k": 4, "fetch_k": 10}
 )
 
-# -------------------------------
-# LLM
-# -------------------------------
+# -----------------------------------
+# LLM (LIGHTER CONFIG)
+# -----------------------------------
 llm = ChatHuggingFace(
     llm=HuggingFaceEndpoint(
         repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-        task="conversational",
         temperature=0.0,
-        max_new_tokens=500,
-        repetition_penalty=1.15,
-        top_p=0.95,
+        max_new_tokens=300,  # reduced for stability
         huggingfacehub_api_token=HUGGINGFACE_API_KEY
     )
 )
 
-# -------------------------------
+# -----------------------------------
 # PROMPT
-# -------------------------------
+# -----------------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -165,9 +160,9 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# -------------------------------
+# -----------------------------------
 # ANSWER FUNCTION
-# -------------------------------
+# -----------------------------------
 def answer_question(question):
 
     docs = retriever.invoke(question)
@@ -206,9 +201,9 @@ def answer_question(question):
 
     return answer + f"\n\n📄 Source: Page(s) {', '.join(map(str, unique_pages))}"
 
-# -------------------------------
+# -----------------------------------
 # CHAT UI
-# -------------------------------
+# -----------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
