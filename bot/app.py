@@ -56,7 +56,6 @@ if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
     )
 
 index = pc.Index(INDEX_NAME)
-existing_namespaces = index.describe_index_stats().get("namespaces", {})
 
 # --------------------------------------------------
 # SIDEBAR
@@ -96,13 +95,6 @@ def load_vectorstore(uploaded_pdf, namespace):
         model_name="sentence-transformers/all-mpnet-base-v2"
     )
 
-    if namespace in existing_namespaces:
-        return PineconeVectorStore.from_existing_index(
-            index_name=INDEX_NAME,
-            embedding=embeddings,
-            namespace=namespace
-        )
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(uploaded_pdf.read())
         pdf_path = tmp.name
@@ -126,10 +118,10 @@ def load_vectorstore(uploaded_pdf, namespace):
 
 vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
 
-# Slightly tighter retrieval for better citation precision
+# Reduced retrieval for cleaner citations
 retriever = vectorstore.as_retriever(
     search_type="mmr",
-    search_kwargs={"k": 6, "fetch_k": 15}
+    search_kwargs={"k": 4, "fetch_k": 10}
 )
 
 # --------------------------------------------------
@@ -148,33 +140,28 @@ llm = ChatHuggingFace(
 )
 
 # --------------------------------------------------
-# PROMPT WITH STRICT CITATION RULES
+# PROMPT
 # --------------------------------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             "You are a precise HR policy document assistant.\n\n"
-            "ABSOLUTE RULES:\n"
+            "RULES:\n"
             "1. Answer ONLY from the provided context.\n"
-            "2. If answer exists, provide it clearly.\n"
-            "3. Use exact wording from the document when possible.\n"
-            "4. NEVER use outside knowledge.\n"
-            "5. If not found, respond EXACTLY: "
+            "2. Use exact wording when possible.\n"
+            "3. NEVER use outside knowledge.\n"
+            "4. If not found, respond EXACTLY: "
             "'I cannot find this information in the document.'\n"
-            "6. After every factual statement, cite like this: [Page X]\n"
-            "7. Do NOT invent page numbers.\n"
-            "8. Do NOT mention chunks or context.\n\n"
-            "OUTPUT:\n"
-            "- Clear answer\n"
-            "- Inline page citations only\n"
+            "5. Do NOT mention chunks or context.\n"
+            "6. Do NOT add page numbers in the answer.\n"
         ),
         ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
     ]
 )
 
 # --------------------------------------------------
-# ANSWER FUNCTION WITH TRUE CITATION EXTRACTION
+# ANSWER FUNCTION
 # --------------------------------------------------
 def answer_question(question):
     docs = retriever.invoke(question)
@@ -182,13 +169,13 @@ def answer_question(question):
     if not docs:
         return "I cannot find this information in the document."
 
-    # Attach page numbers directly in context
     context_parts = []
+    page_numbers = []
 
     for doc in docs:
-        page_num = doc.metadata.get("page", 0) + 1
-        content = doc.page_content.strip()
-        context_parts.append(f"[Page {page_num}]\n{content}")
+        page_num = int(doc.metadata.get("page", 0)) + 1
+        page_numbers.append(page_num)
+        context_parts.append(doc.page_content.strip())
 
     context = "\n\n".join(context_parts)
 
@@ -198,10 +185,9 @@ def answer_question(question):
 
     answer = response.content.strip()
 
-    if answer.startswith("Answer:"):
-        answer = answer[7:].strip()
+    # Clean unwanted artifacts
+    answer = re.sub(r"\[Page \d+\]", "", answer).strip()
 
-    # Standard not found handling
     not_found_phrases = [
         "cannot find",
         "not found",
@@ -213,14 +199,10 @@ def answer_question(question):
     if any(phrase in answer.lower() for phrase in not_found_phrases):
         return "I cannot find this information in the document."
 
-    # Extract ONLY cited pages
-    cited_pages = set(re.findall(r"\[Page (\d+)\]", answer))
+    # Clean duplicate pages and limit to top 2
+    unique_pages = sorted(set(page_numbers))[:2]
 
-    if cited_pages:
-        pages = sorted(map(int, cited_pages))
-        source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages))}"
-    else:
-        source_info = ""
+    source_info = f"\n\n📄 Source: Page(s) {', '.join(map(str, unique_pages))}"
 
     return answer + source_info
 
