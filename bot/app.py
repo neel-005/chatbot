@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import streamlit as st
 from dotenv import load_dotenv
@@ -87,7 +88,7 @@ if st.session_state.active_pdf != pdf_namespace:
     st.cache_resource.clear()
 
 # --------------------------------------------------
-# VECTORSTORE WITH SMALLER CHUNKS
+# VECTORSTORE
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
@@ -108,12 +109,12 @@ def load_vectorstore(uploaded_pdf, namespace):
 
     docs = PyPDFLoader(pdf_path).load()
 
-    # Smaller chunks with higher overlap for better precision
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=300,
         separators=["\n\n", "\n", ". ", " ", ""]
     )
+
     chunks = splitter.split_documents(docs)
 
     return PineconeVectorStore.from_documents(
@@ -125,14 +126,14 @@ def load_vectorstore(uploaded_pdf, namespace):
 
 vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
 
-# Retrieve MORE chunks for comprehensive coverage
+# Slightly tighter retrieval for better citation precision
 retriever = vectorstore.as_retriever(
-    search_type="mmr",  # Maximum Marginal Relevance for diversity
-    search_kwargs={"k": 10, "fetch_k": 20}
+    search_type="mmr",
+    search_kwargs={"k": 6, "fetch_k": 15}
 )
 
 # --------------------------------------------------
-# LLM WITH BETTER CONFIGURATION
+# LLM
 # --------------------------------------------------
 llm = ChatHuggingFace(
     llm=HuggingFaceEndpoint(
@@ -147,85 +148,80 @@ llm = ChatHuggingFace(
 )
 
 # --------------------------------------------------
-# ENHANCED PROMPT
+# PROMPT WITH STRICT CITATION RULES
 # --------------------------------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             "You are a precise HR policy document assistant.\n\n"
-            "ABSOLUTE RULES - FOLLOW EXACTLY:\n"
-            "1. Answer ONLY from the provided context chunks below\n"
-            "2. If the answer exists in ANY chunk, provide it\n"
-            "3. Quote exact text from the document when possible\n"
-            "4. NEVER use external knowledge or make assumptions\n"
-            "5. If you cannot find the answer in the context, respond EXACTLY: "
+            "ABSOLUTE RULES:\n"
+            "1. Answer ONLY from the provided context.\n"
+            "2. If answer exists, provide it clearly.\n"
+            "3. Use exact wording from the document when possible.\n"
+            "4. NEVER use outside knowledge.\n"
+            "5. If not found, respond EXACTLY: "
             "'I cannot find this information in the document.'\n"
-            "6. Be comprehensive - check ALL chunks for relevant information\n"
-            "7. Combine information from multiple chunks if needed\n\n"
-            "OUTPUT FORMAT:\n"
-            "- Give a clear, direct answer\n"
-            "- Use document's exact wording when available\n"
-            "- Keep it concise but complete\n"
-            "- Do NOT mention chunks, pages, or context in your answer"
+            "6. After every factual statement, cite like this: [Page X]\n"
+            "7. Do NOT invent page numbers.\n"
+            "8. Do NOT mention chunks or context.\n\n"
+            "OUTPUT:\n"
+            "- Clear answer\n"
+            "- Inline page citations only\n"
         ),
         ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
     ]
 )
 
 # --------------------------------------------------
-# ENHANCED ANSWER FUNCTION
+# ANSWER FUNCTION WITH TRUE CITATION EXTRACTION
 # --------------------------------------------------
 def answer_question(question):
-    # Retrieve relevant chunks
     docs = retriever.invoke(question)
-    
+
     if not docs:
-        return "No relevant information found in the document."
-    
-    # Build clean context without page markers (they confuse the model)
+        return "I cannot find this information in the document."
+
+    # Attach page numbers directly in context
     context_parts = []
-    page_set = set()
-    
+
     for doc in docs:
         page_num = doc.metadata.get("page", 0) + 1
-        page_set.add(page_num)
-        # Clean context without markers
-        context_parts.append(doc.page_content.strip())
-    
-    # Join with clear separation
-    context = "\n---\n".join(context_parts)
-    
-    # Get answer from LLM
+        content = doc.page_content.strip()
+        context_parts.append(f"[Page {page_num}]\n{content}")
+
+    context = "\n\n".join(context_parts)
+
     response = llm.invoke(
         prompt.format(context=context, question=question)
     )
-    
+
     answer = response.content.strip()
-    
-    # Clean up common LLM artifacts
+
     if answer.startswith("Answer:"):
         answer = answer[7:].strip()
-    
-    # Check for "not found" responses
+
+    # Standard not found handling
     not_found_phrases = [
-        "cannot find", 
-        "not found", 
-        "don't have", 
-        "doesn't contain",
-        "no information",
+        "cannot find",
+        "not found",
         "not mentioned",
         "not available",
         "not specified"
     ]
-    
+
     if any(phrase in answer.lower() for phrase in not_found_phrases):
         return "I cannot find this information in the document."
-    
-    # Add source pages
-    pages = sorted(page_set)
-    source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages))}"
-    
+
+    # Extract ONLY cited pages
+    cited_pages = set(re.findall(r"\[Page (\d+)\]", answer))
+
+    if cited_pages:
+        pages = sorted(map(int, cited_pages))
+        source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages))}"
+    else:
+        source_info = ""
+
     return answer + source_info
 
 # --------------------------------------------------
