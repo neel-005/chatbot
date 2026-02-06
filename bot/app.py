@@ -13,7 +13,7 @@ from langchain_huggingface import (
 )
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import ChatPromptTemplate
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -35,36 +35,35 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-INDEX_NAME = "new-bot-1024"
-EMBEDDING_DIM = 1024   # IMPORTANT: gte-large = 1024
+INDEX_NAME = "new-bot-gte"
+EMBEDDING_DIM = 1024   # gte-large dimension
 
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
-    st.error("Missing API keys.")
+    st.error("Missing API keys in environment.")
     st.stop()
 
 # --------------------------------------------------
-# PINECONE INIT
+# PINECONE INIT (NO AUTO CREATION)
 # --------------------------------------------------
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-existing_indexes = [i["name"] for i in pc.list_indexes()]
-
-if INDEX_NAME not in existing_indexes:
-    pc.create_index(
-        name=INDEX_NAME,
-        dimension=EMBEDDING_DIM,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+try:
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    index = pc.Index(INDEX_NAME)
+except Exception:
+    st.error(
+        f"Pinecone index '{INDEX_NAME}' not found.\n\n"
+        "Create it manually in Pinecone dashboard with:\n"
+        "- Dimension: 1024\n"
+        "- Metric: cosine\n"
+        "- Cloud: AWS"
     )
-
-index = pc.Index(INDEX_NAME)
+    st.stop()
 
 # --------------------------------------------------
 # SIDEBAR
 # --------------------------------------------------
 with st.sidebar:
     uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
-    
+
     if st.button("Clear chat"):
         st.session_state.messages = []
         st.session_state.pending_question = None
@@ -89,7 +88,7 @@ if st.session_state.active_pdf != pdf_namespace:
     st.cache_resource.clear()
 
 # --------------------------------------------------
-# VECTORSTORE WITH GTE-LARGE
+# VECTORSTORE (GTE-LARGE)
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
@@ -154,7 +153,7 @@ prompt = ChatPromptTemplate.from_messages(
             "3. NEVER use outside knowledge.\n"
             "4. If not found, respond EXACTLY: "
             "'I cannot find this information in the document.'\n"
-            "5. Do NOT add page numbers inside the answer.\n"
+            "5. Do NOT mention pages inside the answer.\n"
         ),
         ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
     ]
@@ -185,6 +184,7 @@ def answer_question(question):
 
     answer = response.content.strip()
 
+    # Remove accidental inline citations
     answer = re.sub(r"\[Page \d+\]", "", answer).strip()
 
     not_found_phrases = [
@@ -198,6 +198,7 @@ def answer_question(question):
     if any(phrase in answer.lower() for phrase in not_found_phrases):
         return "I cannot find this information in the document."
 
+    # Clean citation output (top 2 pages only)
     unique_pages = sorted(set(page_numbers))[:2]
 
     source_info = f"\n\n📄 Source: Page(s) {', '.join(map(str, unique_pages))}"
