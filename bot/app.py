@@ -104,7 +104,7 @@ def load_vectorstore(uploaded_pdf, namespace):
     docs = PyPDFLoader(pdf_path).load()
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
+        chunk_size=1000,
         chunk_overlap=300,
         separators=["\n\n", "\n", ". ", " ", ""]
     )
