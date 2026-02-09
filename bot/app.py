@@ -87,14 +87,19 @@ if not uploaded_pdf:
 # --------------------------------------------------
 st.markdown(
     f"""
-    <div style="padding:10px;border-radius:10px;background:#f8f9fa;">
+    <div style="
+        padding:10px;
+        border-radius:10px;
+        background-color: var(--secondary-background-color);
+        color: var(--text-color);
+    ">
     📄 <b>{uploaded_pdf.name}</b><br>
     📦 Size: {round(uploaded_pdf.size / 1024, 2)} KB
     </div>
     """,
     unsafe_allow_html=True
 )
- 
+
  
 # --------------------------------------------------
 # SESSION / NAMESPACE
@@ -117,7 +122,7 @@ if st.session_state.active_pdf != pdf_namespace:
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
+        model_name="Alibaba-NLP/gte-large-en-v1.5"
     )
  
     if namespace in existing_namespaces:
