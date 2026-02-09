@@ -119,6 +119,7 @@ if st.session_state.active_pdf != pdf_namespace:
 # --------------------------------------------------
 # VECTORSTORE
 # --------------------------------------------------
+
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
 
@@ -154,15 +155,6 @@ def load_vectorstore(uploaded_pdf, namespace):
         namespace=namespace
     )
 
- 
- 
-vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
- 
-retriever = vectorstore.as_retriever(
-    search_type="mmr",
-    search_kwargs={"k": 10, "fetch_k": 20}
-)
- 
  
 # --------------------------------------------------
 # LLM
