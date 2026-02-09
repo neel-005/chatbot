@@ -41,7 +41,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
 INDEX_NAME = "new-bot-gte"
-EMBEDDING_DIM = 1024
+EMBEDDING_DIM = 768
 
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.error("Missing API keys.")
@@ -123,7 +123,7 @@ if st.session_state.active_pdf != pdf_namespace:
 def load_vectorstore(uploaded_pdf, namespace):
 
     embeddings = HuggingFaceEmbeddings(
-        model_name="Alibaba-NLP/gte-large-en-v1.5",
+        model_name="Alibaba-NLP/gte-base-en-v1.5",
         model_kwargs={"trust_remote_code": True}
     )
 
@@ -142,7 +142,7 @@ def load_vectorstore(uploaded_pdf, namespace):
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
-        chunk_overlap=300,
+        chunk_overlap=100,
         separators=["\n\n", "\n", ". ", " ", ""]
     )
     chunks = splitter.split_documents(docs)
