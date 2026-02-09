@@ -120,37 +120,40 @@ if st.session_state.active_pdf != pdf_namespace:
 # VECTORSTORE
 # --------------------------------------------------
 @st.cache_resource
-embeddings = HuggingFaceEmbeddings(
-    model_name="Alibaba-NLP/gte-large-en-v1.5",
-    model_kwargs={"trust_remote_code": True}
-)
- 
+def load_vectorstore(uploaded_pdf, namespace):
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="Alibaba-NLP/gte-large-en-v1.5",
+        model_kwargs={"trust_remote_code": True}
+    )
+
     if namespace in existing_namespaces:
         return PineconeVectorStore.from_existing_index(
             index_name=INDEX_NAME,
             embedding=embeddings,
             namespace=namespace
         )
- 
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(uploaded_pdf.read())
         pdf_path = tmp.name
- 
+
     docs = PyPDFLoader(pdf_path).load()
- 
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=300,
         separators=["\n\n", "\n", ". ", " ", ""]
     )
     chunks = splitter.split_documents(docs)
- 
+
     return PineconeVectorStore.from_documents(
         documents=chunks,
         embedding=embeddings,
         index_name=INDEX_NAME,
         namespace=namespace
     )
+
  
  
 vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
