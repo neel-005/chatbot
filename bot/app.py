@@ -81,26 +81,6 @@ if not uploaded_pdf:
     st.info("Upload a PDF from the sidebar to begin")
     st.stop()
 
-
-# --------------------------------------------------
-# PDF INFO CARD
-# --------------------------------------------------
-st.markdown(
-    f"""
-    <div style="
-        padding:10px;
-        border-radius:10px;
-        background-color: var(--secondary-background-color);
-        color: var(--text-color);
-    ">
-    📄 <b>{uploaded_pdf.name}</b><br>
-    📦 Size: {round(uploaded_pdf.size / 1024, 2)} KB
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-
 # --------------------------------------------------
 # SESSION / NAMESPACE
 # --------------------------------------------------
