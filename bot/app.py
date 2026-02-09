@@ -16,7 +16,7 @@ from pinecone import Pinecone, ServerlessSpec
  
  
 # --------------------------------------------------
-# 🌈 PAGE CONFIG (PREVIOUS UI STYLE)
+# PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(
     page_title="PDF Chatbot",
@@ -62,11 +62,10 @@ if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
     )
  
 index = pc.Index(INDEX_NAME)
-existing_namespaces = index.describe_index_stats().get("namespaces", {})
  
  
 # --------------------------------------------------
-# 📂 SIDEBAR (PREVIOUS UI STYLE)
+# SIDEBAR
 # --------------------------------------------------
 with st.sidebar:
     st.markdown("Document Control")
@@ -83,7 +82,7 @@ if not uploaded_pdf:
  
  
 # --------------------------------------------------
-# 📄 PDF INFO CARD (PREVIOUS UI STYLE)
+# PDF INFO CARD
 # --------------------------------------------------
 st.markdown(
     f"""
@@ -99,27 +98,11 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
- 
-# --------------------------------------------------
-# SESSION / NAMESPACE
-# --------------------------------------------------
-pdf_namespace = uploaded_pdf.name.replace(" ", "_").lower()
- 
-if "active_pdf" not in st.session_state:
-    st.session_state.active_pdf = pdf_namespace
- 
-if st.session_state.active_pdf != pdf_namespace:
-    st.session_state.active_pdf = pdf_namespace
-    st.session_state.messages = []
-    st.session_state.pending_question = None
-    st.cache_resource.clear()
  
  
 # --------------------------------------------------
 # VECTORSTORE
 # --------------------------------------------------
-
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
 
@@ -127,13 +110,6 @@ def load_vectorstore(uploaded_pdf, namespace):
         model_name="Alibaba-NLP/gte-large-en-v1.5",
         model_kwargs={"trust_remote_code": True}
     )
-
-    if namespace in existing_namespaces:
-        return PineconeVectorStore.from_existing_index(
-            index_name=INDEX_NAME,
-            embedding=embeddings,
-            namespace=namespace
-        )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(uploaded_pdf.read())
@@ -155,7 +131,18 @@ def load_vectorstore(uploaded_pdf, namespace):
         namespace=namespace
     )
 
- 
+
+# ✅ ADDED BACK (as requested)
+pdf_namespace = uploaded_pdf.name.replace(" ", "_").lower()
+
+vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
+
+retriever = vectorstore.as_retriever(
+    search_type="mmr",
+    search_kwargs={"k": 10, "fetch_k": 20}
+)
+
+
 # --------------------------------------------------
 # LLM
 # --------------------------------------------------
@@ -173,7 +160,7 @@ llm = ChatHuggingFace(
  
  
 # --------------------------------------------------
-# PROMPT (UNCHANGED)
+# PROMPT (unchanged)
 # --------------------------------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -201,7 +188,7 @@ prompt = ChatPromptTemplate.from_messages(
  
  
 # --------------------------------------------------
-# ANSWER FUNCTION (UNCHANGED)
+# ANSWER FUNCTION
 # --------------------------------------------------
 def answer_question(question, retriever):
     docs = retriever.invoke(question)
@@ -265,12 +252,14 @@ if query and st.session_state.pending_question is None:
 if st.session_state.pending_question:
     with st.chat_message("assistant"):
         with st.spinner("Searching document..."):
-            answer = answer_question(st.session_state.pending_question)
+            # ✅ FIXED CALL (as requested)
+            answer = answer_question(
+                st.session_state.pending_question,
+                retriever
+            )
  
     st.session_state.messages.append(
         {"role": "assistant", "content": answer}
     )
     st.session_state.pending_question = None
     st.rerun()
- 
- 
