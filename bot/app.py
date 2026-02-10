@@ -14,9 +14,8 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone, ServerlessSpec
  
- 
 # --------------------------------------------------
-# 🌈 PAGE CONFIG (PREVIOUS UI STYLE)
+# PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(
     page_title="PDF Q&A Chatbot",
@@ -30,7 +29,6 @@ st.markdown("""
 Ask questions about your uploaded PDF documents.
 </p>
 """, unsafe_allow_html=True)
- 
  
 # --------------------------------------------------
 # LOAD ENV
@@ -46,7 +44,6 @@ EMBEDDING_DIM = 768
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.error("Missing API keys.")
     st.stop()
- 
  
 # --------------------------------------------------
 # PINECONE INIT
@@ -64,9 +61,8 @@ if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
 index = pc.Index(INDEX_NAME)
 existing_namespaces = index.describe_index_stats().get("namespaces", {})
  
- 
 # --------------------------------------------------
-# 📂 SIDEBAR (PREVIOUS UI STYLE)
+# SIDEBAR
 # --------------------------------------------------
 with st.sidebar:
     st.markdown("Document Control")
@@ -94,7 +90,6 @@ if st.session_state.active_pdf != pdf_namespace:
     st.session_state.messages = []
     st.session_state.pending_question = None
     st.cache_resource.clear()
- 
  
 # --------------------------------------------------
 # VECTORSTORE
@@ -134,6 +129,15 @@ def load_vectorstore(uploaded_pdf, namespace):
         index_name=INDEX_NAME,
         namespace=namespace
     )
+
+# ✅ RESTORED THIS SECTION
+vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
+
+retriever = vectorstore.as_retriever(
+    search_type="mmr",
+    search_kwargs={"k": 10, "fetch_k": 20}
+)
+
 # --------------------------------------------------
 # LLM
 # --------------------------------------------------
@@ -149,9 +153,8 @@ llm = ChatHuggingFace(
     )
 )
  
- 
 # --------------------------------------------------
-# PROMPT (UNCHANGED)
+# PROMPT
 # --------------------------------------------------
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -177,9 +180,8 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
  
- 
 # --------------------------------------------------
-# ANSWER FUNCTION (UNCHANGED)
+# ANSWER FUNCTION
 # --------------------------------------------------
 def answer_question(question, retriever):
     docs = retriever.invoke(question)
@@ -219,7 +221,6 @@ def answer_question(question, retriever):
  
     return answer + source_info
  
- 
 # --------------------------------------------------
 # CHAT UI
 # --------------------------------------------------
@@ -243,7 +244,10 @@ if query and st.session_state.pending_question is None:
 if st.session_state.pending_question:
     with st.chat_message("assistant"):
         with st.spinner("Searching document..."):
-            answer = answer_question(st.session_state.pending_question)
+            answer = answer_question(
+                st.session_state.pending_question,
+                retriever
+            )
  
     st.session_state.messages.append(
         {"role": "assistant", "content": answer}
