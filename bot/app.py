@@ -101,10 +101,10 @@ if st.session_state.active_pdf != pdf_namespace:
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
-embeddings = HuggingFaceEmbeddings(
-    model_name="Alibaba-NLP/gte-base-en-v1.5",
-    model_kwargs={"trust_remote_code": True}
-)
+ embeddings = HuggingFaceEmbeddings(
+     model_name="Alibaba-NLP/gte-base-en-v1.5",
+     model_kwargs={"trust_remote_code": True}
+ )
  
     if namespace in existing_namespaces:
         return PineconeVectorStore.from_existing_index(
