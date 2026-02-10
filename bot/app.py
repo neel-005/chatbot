@@ -1,55 +1,38 @@
 import os
 import tempfile
+import hashlib
 import streamlit as st
 from dotenv import load_dotenv
- 
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import (
-    HuggingFaceEmbeddings,
-    HuggingFaceEndpoint,
-    ChatHuggingFace
-)
+from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone, ServerlessSpec
- 
+
 # --------------------------------------------------
-# PAGE CONFIG
+# CONFIG
 # --------------------------------------------------
-st.set_page_config(
-    page_title="PDF Q&A Chatbot",
-    page_icon="📘",
-    layout="centered"
-)
- 
-st.markdown("""
-<h1 style="text-align:center;">PDF Q&A Chatbot</h1>
-<p style="text-align:center; color:gray;">
-Ask questions about your uploaded PDF documents.
-</p>
-""", unsafe_allow_html=True)
- 
-# --------------------------------------------------
-# LOAD ENV
-# --------------------------------------------------
+st.set_page_config(page_title="PDF Q&A", page_icon="📘")
+
 load_dotenv()
- 
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
- 
-INDEX_NAME = "new-bot-gte"
-EMBEDDING_DIM = 768
- 
+
+INDEX_NAME = "pdf-qa-production"
+EMBEDDING_DIM = 384
+
 if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.error("Missing API keys.")
     st.stop()
- 
+
 # --------------------------------------------------
 # PINECONE INIT
 # --------------------------------------------------
 pc = Pinecone(api_key=PINECONE_API_KEY)
- 
+
 if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
     pc.create_index(
         name=INDEX_NAME,
@@ -57,68 +40,60 @@ if INDEX_NAME not in [i["name"] for i in pc.list_indexes()]:
         metric="cosine",
         spec=ServerlessSpec(cloud="aws", region="us-east-1")
     )
- 
-index = pc.Index(INDEX_NAME)
-existing_namespaces = index.describe_index_stats().get("namespaces", {})
- 
+
+# --------------------------------------------------
+# EMBEDDINGS
+# --------------------------------------------------
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
 # --------------------------------------------------
 # SIDEBAR
 # --------------------------------------------------
 with st.sidebar:
-    st.markdown("Document Control")
-    uploaded_pdf = st.file_uploader("Upload a PDF", type=["pdf"])
- 
-    if st.button("Clear Chat"):
-        st.session_state.messages = []
-        st.session_state.pending_question = None
+    uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
+    if st.button("Clear Session"):
+        st.session_state.clear()
         st.rerun()
- 
+
 if not uploaded_pdf:
-    st.info("Upload a PDF from the sidebar to begin")
+    st.info("Upload a PDF to begin.")
     st.stop()
 
 # --------------------------------------------------
-# SESSION / NAMESPACE
+# SAVE PDF TEMPORARILY
 # --------------------------------------------------
-pdf_namespace = uploaded_pdf.name.replace(" ", "_").lower()
- 
-if "active_pdf" not in st.session_state:
-    st.session_state.active_pdf = pdf_namespace
- 
-if st.session_state.active_pdf != pdf_namespace:
-    st.session_state.active_pdf = pdf_namespace
-    st.session_state.messages = []
-    st.session_state.pending_question = None
-    st.cache_resource.clear()
- 
+with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+    tmp.write(uploaded_pdf.read())
+    pdf_path = tmp.name
+
+# Unique namespace per file (hash-based)
+file_hash = hashlib.md5(open(pdf_path, "rb").read()).hexdigest()
+namespace = file_hash
+
 # --------------------------------------------------
-# VECTORSTORE
+# LOAD / CREATE VECTORSTORE
 # --------------------------------------------------
+index = pc.Index(INDEX_NAME)
+
 @st.cache_resource
-def load_vectorstore(uploaded_pdf, namespace):
+def build_vectorstore(pdf_path, namespace):
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="Alibaba-NLP/gte-base-en-v1.5",
-        model_kwargs={"trust_remote_code": True}
-    )
+    existing = index.describe_index_stats().get("namespaces", {})
 
-    if namespace in existing_namespaces:
+    if namespace in existing:
         return PineconeVectorStore.from_existing_index(
             index_name=INDEX_NAME,
             embedding=embeddings,
             namespace=namespace
         )
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_pdf.read())
-        pdf_path = tmp.name
-
     docs = PyPDFLoader(pdf_path).load()
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=300,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        chunk_size=500,
+        chunk_overlap=100
     )
 
     chunks = splitter.split_documents(docs)
@@ -130,13 +105,7 @@ def load_vectorstore(uploaded_pdf, namespace):
         namespace=namespace
     )
 
-# ✅ RESTORED THIS SECTION
-vectorstore = load_vectorstore(uploaded_pdf, pdf_namespace)
-
-retriever = vectorstore.as_retriever(
-    search_type="mmr",
-    search_kwargs={"k": 10, "fetch_k": 20}
-)
+vectorstore = build_vectorstore(pdf_path, namespace)
 
 # --------------------------------------------------
 # LLM
@@ -144,113 +113,75 @@ retriever = vectorstore.as_retriever(
 llm = ChatHuggingFace(
     llm=HuggingFaceEndpoint(
         repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-        task="conversational",
         temperature=0.0,
-        max_new_tokens=500,
-        repetition_penalty=1.15,
-        top_p=0.95,
+        max_new_tokens=400,
         huggingfacehub_api_token=HUGGINGFACE_API_KEY
     )
 )
- 
+
 # --------------------------------------------------
-# PROMPT
+# STRICT PROMPT
 # --------------------------------------------------
-prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "You are a precise HR policy document assistant.\n\n"
-            "ABSOLUTE RULES - FOLLOW EXACTLY:\n"
-            "1. Answer ONLY from the provided context chunks below\n"
-            "2. If the answer exists in ANY chunk, provide it\n"
-            "3. Quote exact text from the document when possible\n"
-            "4. NEVER use external knowledge or make assumptions\n"
-            "5. If you cannot find the answer in the context, respond EXACTLY: "
-            "'I cannot find this information in the document.'\n"
-            "6. Be comprehensive - check ALL chunks for relevant information\n"
-            "7. Combine information from multiple chunks if needed\n\n"
-            "OUTPUT FORMAT:\n"
-            "- Give a clear, direct answer\n"
-            "- Use document's exact wording when available\n"
-            "- Keep it concise but complete\n"
-            "- Do NOT mention chunks, pages, or context in your answer"
-        ),
-        ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
-    ]
-)
- 
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a strict document extraction assistant.\n"
+     "Rules:\n"
+     "1. Use ONLY text from the provided context.\n"
+     "2. Do NOT paraphrase.\n"
+     "3. Do NOT explain.\n"
+     "4. If the answer is not explicitly present, respond exactly:\n"
+     "'I cannot find this information in the document.'"
+    ),
+    ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
+])
+
 # --------------------------------------------------
 # ANSWER FUNCTION
 # --------------------------------------------------
-def answer_question(question, retriever):
-    docs = retriever.invoke(question)
- 
-    if not docs:
-        return "No relevant information found in the document."
- 
-    context_parts = []
-    page_set = set()
- 
-    for doc in docs:
-        page_num = doc.metadata.get("page", 0) + 1
-        page_set.add(page_num)
-        context_parts.append(doc.page_content.strip())
- 
-    context = "\n---\n".join(context_parts)
- 
+def answer_question(question):
+
+    results = vectorstore.similarity_search_with_score(question, k=3)
+
+    # similarity threshold filter
+    filtered = [(doc, score) for doc, score in results if score < 0.4]
+
+    if not filtered:
+        return "I cannot find this information in the document."
+
+    docs = [doc for doc, _ in filtered]
+
+    context = "\n---\n".join([doc.page_content for doc in docs])
+
     response = llm.invoke(
         prompt.format(context=context, question=question)
     )
- 
+
     answer = response.content.strip()
- 
-    if answer.startswith("Answer:"):
-        answer = answer[7:].strip()
- 
-    not_found_phrases = [
-        "cannot find", "not found", "no information",
-        "not mentioned", "not available"
-    ]
- 
-    if any(p in answer.lower() for p in not_found_phrases):
+
+    if "cannot find" in answer.lower():
         return "I cannot find this information in the document."
- 
-    pages = sorted(page_set)
-    source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages[:3]))}"
- 
-    return answer + source_info
- 
+
+    pages = sorted({doc.metadata.get("page", 0) + 1 for doc in docs})
+    return answer + f"\n\n📄 Source: Page(s) {', '.join(map(str, pages))}"
+
 # --------------------------------------------------
-# CHAT UI
+# CHAT
 # --------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
- 
-if "pending_question" not in st.session_state:
-    st.session_state.pending_question = None
- 
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
- 
-query = st.chat_input("Ask anything about the PDF...")
- 
-if query and st.session_state.pending_question is None:
+
+query = st.chat_input("Ask a question about the PDF...")
+
+if query:
     st.session_state.messages.append({"role": "user", "content": query})
-    st.session_state.pending_question = query
-    st.rerun()
- 
-if st.session_state.pending_question:
+
     with st.chat_message("assistant"):
-        with st.spinner("Searching document..."):
-            answer = answer_question(
-                st.session_state.pending_question,
-                retriever
-            )
- 
-    st.session_state.messages.append(
-        {"role": "assistant", "content": answer}
-    )
-    st.session_state.pending_question = None
-    st.rerun()
+        with st.spinner("Searching..."):
+            answer = answer_question(query)
+            st.markdown(answer)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
