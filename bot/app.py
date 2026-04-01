@@ -38,7 +38,6 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# ✅ FIXED
 INDEX_NAME = "new-bot-fixed"
 EMBEDDING_DIM = 384
 
@@ -97,8 +96,6 @@ if st.session_state.active_pdf != pdf_namespace:
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
-
-    # ✅ FIXED EMBEDDING MODEL
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
@@ -116,7 +113,6 @@ def load_vectorstore(uploaded_pdf, namespace):
 
     docs = PyPDFLoader(pdf_path).load()
 
-    # ✅ FIXED CHUNK SIZE
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=100,
@@ -155,29 +151,22 @@ llm = HuggingFaceEndpoint(
 # --------------------------------------------------
 # PROMPT
 # --------------------------------------------------
-SYSTEM_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "You are a precise document assistant.\n\n"
-            "ABSOLUTE RULES - FOLLOW EXACTLY:\n"
-            "1. Answer ONLY from the provided context chunks below\n"
-            "2. If the answer exists in ANY chunk, provide it\n"
-            "3. Quote exact text from the document when possible\n"
-            "4. NEVER use external knowledge or make assumptions\n"
-            "5. If you cannot find the answer in the context, respond EXACTLY: "
-            "'I cannot find this information in the document.'\n"
-            "6. Be comprehensive - check ALL chunks for relevant information\n"
-            "7. Combine information from multiple chunks if needed\n\n"
-            "OUTPUT FORMAT:\n"
-            "- Give a clear, direct answer\n"
-            "- Use document's exact wording when available\n"
-            "- Keep it concise but complete\n"
-            "- Do NOT mention chunks, pages, or context in your answer"
-        ),
-        ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
-    ]
-)
+SYSTEM_PROMPT = """You are a precise HR policy document assistant.
+
+ABSOLUTE RULES - FOLLOW EXACTLY:
+1. Answer ONLY from the provided context chunks below
+2. If the answer exists in ANY chunk, provide it
+3. Quote exact text from the document when possible
+4. NEVER use external knowledge or make assumptions
+5. If you cannot find the answer in the context, respond EXACTLY: 'I cannot find this information in the document.'
+6. Be comprehensive - check ALL chunks for relevant information
+7. Combine information from multiple chunks if needed
+
+OUTPUT FORMAT:
+- Give a clear, direct answer
+- Use document's exact wording when available
+- Keep it concise but complete
+- Do NOT mention chunks, pages, or context in your answer"""
 
 # --------------------------------------------------
 # ANSWER FUNCTION
@@ -222,6 +211,7 @@ Question: {question} [/INST]"""
     source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages[:3]))}"
 
     return answer + source_info
+
 # --------------------------------------------------
 # CHAT UI
 # --------------------------------------------------
