@@ -142,16 +142,14 @@ retriever = vectorstore.as_retriever(
 # --------------------------------------------------
 # LLM
 # --------------------------------------------------
-llm = ChatHuggingFace(
-    llm=HuggingFaceEndpoint(
-        repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-        task="conversational",
-        temperature=0.0,
-        max_new_tokens=500,
-        repetition_penalty=1.15,
-        top_p=0.95,
-        huggingfacehub_api_token=HUGGINGFACE_API_KEY
-    )
+llm = HuggingFaceEndpoint(
+    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+    task="text-generation",
+    temperature=0.1,
+    max_new_tokens=500,
+    repetition_penalty=1.15,
+    top_p=0.95,
+    huggingfacehub_api_token=HUGGINGFACE_API_KEY
 )
 
 # --------------------------------------------------
@@ -200,11 +198,14 @@ def answer_question(question, retriever):
 
     context = "\n---\n".join(context_parts)
 
-    # FIXED: invoke the chain properly instead of passing a pre-formatted string
-    chain = prompt | llm
-    response = chain.invoke({"context": context, "question": question})
+    full_prompt = f"""<s>[INST] {SYSTEM_PROMPT}
 
-    answer = response.content.strip()
+Context:
+{context}
+
+Question: {question} [/INST]"""
+
+    answer = llm.invoke(full_prompt).strip()
 
     if answer.startswith("Answer:"):
         answer = answer[7:].strip()
@@ -221,7 +222,6 @@ def answer_question(question, retriever):
     source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages[:3]))}"
 
     return answer + source_info
-
 # --------------------------------------------------
 # CHAT UI
 # --------------------------------------------------
