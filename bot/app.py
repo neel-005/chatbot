@@ -56,6 +56,27 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # --------------------------------------------------
+# SYSTEM PROMPT
+# --------------------------------------------------
+SYSTEM_PROMPT = """You are a precise document assistant.
+
+ABSOLUTE RULES:
+1. Answer ONLY from the provided context chunks below
+2. If the answer exists in ANY chunk, provide it
+3. Quote exact text from the document when possible
+4. NEVER use external knowledge or make assumptions
+5. If you cannot find the answer in the context, say exactly: 'I cannot find this information in the document.'
+6. Be comprehensive - check ALL chunks for relevant information
+7. Combine information from multiple chunks if needed
+
+OUTPUT FORMAT:
+- Give a clear, direct answer
+- Use the document's exact wording when available
+- Keep it concise but complete
+- Provide page number of the chunk that is in the answer
+- Do NOT mention chunks, or context in your answer"""
+
+# --------------------------------------------------
 # CUSTOM EMBEDDING CLASS
 # No __init__ args — uses global hf_client, no caching issues
 # --------------------------------------------------
@@ -104,6 +125,39 @@ class HFInferenceEmbeddings(Embeddings):
 
     def embed_query(self, text: str) -> List[float]:
         return self._embed([text])[0]
+
+
+# --------------------------------------------------
+# LLM
+# --------------------------------------------------
+def call_llm(prompt: str) -> str:
+    for attempt in range(3):
+        try:
+            result = hf_client.chat_completion(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                temperature=0.1,
+            )
+            return result.choices[0].message.content.strip()
+
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "loading" in err.lower():
+                st.warning(f"⏳ LLM loading, retrying... ({attempt+1}/3)")
+                time.sleep(15)
+                continue
+            if "401" in err:
+                st.error("❌ Invalid HuggingFace API key.")
+                st.stop()
+            st.error(f"❌ LLM error: {err}")
+            st.stop()
+
+    return "❌ LLM failed to respond after 3 retries. Please try again."
+
 
 # --------------------------------------------------
 # PINECONE INIT
@@ -185,6 +239,7 @@ def load_vectorstore(pdf_bytes: bytes, namespace: str):
         namespace=namespace
     )
 
+
 pdf_bytes = uploaded_pdf.read()
 vectorstore = load_vectorstore(pdf_bytes, pdf_namespace)
 
@@ -194,59 +249,9 @@ retriever = vectorstore.as_retriever(
 )
 
 # --------------------------------------------------
-# LLM
-# --------------------------------------------------def call_llm(prompt: str) -> str:
-for attempt in range(3):
-        try:
-            result = hf_client.chat_completion(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                temperature=0.1,
-            )
-            return result.choices[0].message.content.strip()
-
-        except Exception as e:
-            err = str(e)
-            if "503" in err or "loading" in err.lower():
-                st.warning(f"⏳ LLM loading, retrying... ({attempt+1}/3)")
-                time.sleep(15)
-                continue
-            if "401" in err:
-                st.error("❌ Invalid HuggingFace API key.")
-                st.stop()
-            st.error(f"❌ LLM error: {err}")
-            st.stop()
-
-return "❌ LLM failed to respond after 3 retries. Please try again."
-
-# --------------------------------------------------
-# SYSTEM PROMPT
-# --------------------------------------------------
-SYSTEM_PROMPT = """You are a precise document assistant.
-
-ABSOLUTE RULES:
-1. Answer ONLY from the provided context chunks below
-2. If the answer exists in ANY chunk, provide it
-3. Quote exact text from the document when possible
-4. NEVER use external knowledge or make assumptions
-5. If you cannot find the answer in the context, say exactly: 'I cannot find this information in the document.'
-6. Be comprehensive - check ALL chunks for relevant information
-7. Combine information from multiple chunks if needed
-
-OUTPUT FORMAT:
-- Give a clear, direct answer
-- Use the document's exact wording when available
-- Keep it concise but complete
-- Provide page number of the chunk that is in the answer
-- Do NOT mention chunks, or context in your answer"""
-
-# --------------------------------------------------
 # ANSWER FUNCTION
-# --------------------------------------------------def answer_question(question: str, retriever) -> str:
+# --------------------------------------------------
+def answer_question(question: str, retriever) -> str:
     docs = retriever.invoke(question)
 
     if not docs:
@@ -277,6 +282,7 @@ OUTPUT FORMAT:
     pages = sorted(page_set)
     source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages[:3]))}"
     return answer + source_info
+
 
 # --------------------------------------------------
 # CHAT UI
