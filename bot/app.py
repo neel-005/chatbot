@@ -1,14 +1,14 @@
 import os
 import tempfile
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
-from huggingface_hub import InferenceClient
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -92,7 +92,9 @@ if st.session_state.active_pdf != pdf_namespace:
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
-    embeddings = HuggingFaceEmbeddings(
+    # API-based embeddings — no local model download
+    embeddings = HuggingFaceInferenceAPIEmbeddings(
+        api_key=HUGGINGFACE_API_KEY,
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
@@ -132,12 +134,32 @@ retriever = vectorstore.as_retriever(
 )
 
 # --------------------------------------------------
-# LLM
+# LLM  — pure requests call, no huggingface_hub SDK
 # --------------------------------------------------
-client = InferenceClient(
-    model="mistralai/Mistral-7B-Instruct-v0.3",
-    token=HUGGINGFACE_API_KEY
-)
+HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+HF_HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+
+def call_llm(prompt: str) -> str:
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 500,
+            "temperature": 0.1,
+            "top_p": 0.95,
+            "return_full_text": False
+        }
+    }
+    try:
+        response = requests.post(HF_API_URL, headers=HF_HEADERS, json=payload, timeout=60)
+        response.raise_for_status()
+        result = response.json()
+
+        # HF inference API returns a list
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get("generated_text", "").strip()
+        return "I cannot find this information in the document."
+    except Exception as e:
+        return f"LLM error: {str(e)}"
 
 # --------------------------------------------------
 # PROMPT
@@ -178,17 +200,10 @@ def answer_question(question, retriever):
 
     context = "\n---\n".join(context_parts)
 
-    response = client.chat_completion(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-        ],
-        max_tokens=500,
-        temperature=0.1,
-        top_p=0.95,
-    )
+    # Format as Mistral instruct prompt
+    prompt = f"<s>[INST] <<SYS>>\n{SYSTEM_PROMPT}\n<</SYS>>\n\nContext:\n{context}\n\nQuestion: {question} [/INST]"
 
-    answer = response.choices[0].message.content.strip()
+    answer = call_llm(prompt)
 
     if answer.startswith("Answer:"):
         answer = answer[7:].strip()
