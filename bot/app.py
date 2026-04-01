@@ -195,7 +195,7 @@ retriever = vectorstore.as_retriever(
 # --------------------------------------------------
 # LLM — Zephyr-7B (free on HuggingFace)
 # --------------------------------------------------
-HF_API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+HF_API_URL = "https://router.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 HF_HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
 
 def call_llm(prompt: str) -> str:
