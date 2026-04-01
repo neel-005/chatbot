@@ -155,7 +155,7 @@ llm = HuggingFaceEndpoint(
 # --------------------------------------------------
 # PROMPT
 # --------------------------------------------------
-prompt = ChatPromptTemplate.from_messages(
+SYSTEM_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
