@@ -196,7 +196,7 @@ retriever = vectorstore.as_retriever(
 # --------------------------------------------------
 # LLM
 # --------------------------------------------------def call_llm(prompt: str) -> str:
-    for attempt in range(3):
+for attempt in range(3):
         try:
             result = hf_client.chat_completion(
                 model=LLM_MODEL,
