@@ -86,14 +86,14 @@ def _embed(self, texts: List[str]) -> List[List[float]]:
             if "403" in err:
                 st.error("❌ Access denied to embedding model.")
                 st.stop()
-            st.error(f"❌ Embedding error: {err}")
-            st.stop()
+                st.error(f"❌ Embedding error: {err}")
+                st.stop()
 
-    st.error("❌ Embedding model failed after 3 retries. Please try again.")
-    st.stop()
+                st.error("❌ Embedding model failed after 3 retries. Please try again.")
+                st.stop()
 
-        st.error("❌ Embedding model failed after 3 retries. Please try again.")
-        st.stop()
+                st.error("❌ Embedding model failed after 3 retries. Please try again.")
+                st.stop()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         all_embeddings = []
