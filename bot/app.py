@@ -221,7 +221,7 @@ for attempt in range(3):
             st.error(f"❌ LLM error: {err}")
             st.stop()
 
-    return "❌ LLM failed to respond after 3 retries. Please try again."
+return "❌ LLM failed to respond after 3 retries. Please try again."
 
 # --------------------------------------------------
 # SYSTEM PROMPT
