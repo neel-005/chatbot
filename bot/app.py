@@ -9,6 +9,51 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from langchain_core.embeddings import Embeddings
+from typing import List
+
+# --------------------------------------------------
+# CUSTOM EMBEDDING CLASS (API-based, no local download)
+# --------------------------------------------------
+class HFInferenceEmbeddings(Embeddings):
+    def __init__(self, api_key: str, model: str):
+        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model}"
+        self.headers = {"Authorization": f"Bearer {api_key}"}
+
+    def _embed(self, texts: List[str]) -> List[List[float]]:
+        response = requests.post(
+            self.api_url,
+            headers=self.headers,
+            json={"inputs": texts, "options": {"wait_for_model": True}},
+            timeout=60
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # Result is either [[float]] or [[[float]]] depending on model
+        # all-MiniLM-L6-v2 returns shape: (batch, seq_len, hidden)
+        # We need to mean-pool if 3D
+        embeddings = []
+        for item in result:
+            if isinstance(item[0], list):
+                # 3D: mean pool over token dimension
+                vec = [sum(col) / len(col) for col in zip(*item)]
+            else:
+                # 2D: already a flat vector
+                vec = item
+            embeddings.append(vec)
+        return embeddings
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # Batch in groups of 32 to avoid request size limits
+        all_embeddings = []
+        for i in range(0, len(texts), 32):
+            batch = texts[i:i+32]
+            all_embeddings.extend(self._embed(batch))
+        return all_embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed([text])[0]
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -93,10 +138,10 @@ if st.session_state.active_pdf != pdf_namespace:
 @st.cache_resource
 def load_vectorstore(uploaded_pdf, namespace):
     # API-based embeddings — no local model download
-    embeddings = HuggingFaceInferenceAPIEmbeddings(
-        api_key=HUGGINGFACE_API_KEY,
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    embeddings = HFInferenceEmbeddings(
+    api_key=HUGGINGFACE_API_KEY,
+    model="sentence-transformers/all-MiniLM-L6-v2"
+)
 
     if namespace in existing_namespaces:
         return PineconeVectorStore.from_existing_index(
