@@ -1,7 +1,6 @@
 import os
 import time
 import tempfile
-import requests
 import streamlit as st
 from dotenv import load_dotenv
 from typing import List
@@ -11,6 +10,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from huggingface_hub import InferenceClient
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -44,53 +44,51 @@ if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.stop()
 
 # --------------------------------------------------
-# CUSTOM EMBEDDING CLASS (free, API-based)
+# CUSTOM EMBEDDING CLASS
+# Uses huggingface_hub InferenceClient — correct 2025 API
 # --------------------------------------------------
 class HFInferenceEmbeddings(Embeddings):
     def __init__(self, api_key: str):
-        self.api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
-        self.headers = {"Authorization": f"Bearer {api_key}"}
+        self.client = InferenceClient(
+            provider="hf-inference",
+            api_key=api_key
+        )
+        self.model = "sentence-transformers/all-MiniLM-L6-v2"
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
         for attempt in range(3):
-            response = requests.post(
-                self.api_url,
-                headers=self.headers,
-                json={"inputs": texts, "options": {"wait_for_model": True}},
-                timeout=60
-            )
+            try:
+                result = self.client.feature_extraction(
+                    texts,
+                    model=self.model
+                )
+                # result is a numpy array of shape (batch, dim) or (batch, seq, dim)
+                embeddings = []
+                for vec in result:
+                    # If 2D token-level output, mean pool
+                    if hasattr(vec[0], '__iter__'):
+                        pooled = [sum(col) / len(col) for col in zip(*vec)]
+                        embeddings.append(pooled)
+                    else:
+                        embeddings.append(list(vec))
+                return embeddings
 
-            if not response.ok:
-                error_detail = f"Status {response.status_code}: {response.text}"
-
-                if response.status_code == 503:
-                    st.warning(f"⏳ Embedding model loading, retrying... (attempt {attempt+1}/3)")
+            except Exception as e:
+                err = str(e)
+                if "503" in err or "loading" in err.lower():
+                    st.warning(f"⏳ Embedding model loading, retrying... ({attempt+1}/3)")
                     time.sleep(10)
                     continue
-
-                if response.status_code == 401:
+                if "401" in err:
                     st.error("❌ Invalid HuggingFace API key. Check your HUGGINGFACE_API_KEY secret.")
                     st.stop()
-
-                if response.status_code == 403:
+                if "403" in err:
                     st.error("❌ Access denied to embedding model.")
                     st.stop()
-
-                st.error(f"❌ Embedding API error: {error_detail}")
+                st.error(f"❌ Embedding error: {err}")
                 st.stop()
 
-            result = response.json()
-            embeddings = []
-            for item in result:
-                if isinstance(item[0], list):
-                    # 3D response: mean pool over token dimension
-                    vec = [sum(col) / len(col) for col in zip(*item)]
-                else:
-                    vec = item
-                embeddings.append(vec)
-            return embeddings
-
-        st.error("❌ Embedding model failed to load after 3 retries. Please try again in a minute.")
+        st.error("❌ Embedding model failed after 3 retries. Please try again.")
         st.stop()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -153,7 +151,7 @@ if st.session_state.active_pdf != pdf_namespace:
 # VECTORSTORE
 # --------------------------------------------------
 @st.cache_resource
-def load_vectorstore(pdf_bytes, namespace):
+def load_vectorstore(pdf_bytes: bytes, namespace: str):
     embeddings = HFInferenceEmbeddings(api_key=HUGGINGFACE_API_KEY)
 
     if namespace in existing_namespaces:
@@ -183,7 +181,6 @@ def load_vectorstore(pdf_bytes, namespace):
         namespace=namespace
     )
 
-# Pass bytes so the cached function gets a hashable-friendly input
 pdf_bytes = uploaded_pdf.read()
 vectorstore = load_vectorstore(pdf_bytes, pdf_namespace)
 
@@ -193,50 +190,42 @@ retriever = vectorstore.as_retriever(
 )
 
 # --------------------------------------------------
-# LLM — Zephyr-7B (free on HuggingFace)
+# LLM — Zephyr-7B via InferenceClient
 # --------------------------------------------------
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
-HF_HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+@st.cache_resource
+def get_llm_client():
+    return InferenceClient(
+        provider="hf-inference",
+        api_key=HUGGINGFACE_API_KEY
+    )
+
+LLM_MODEL = "HuggingFaceH4/zephyr-7b-beta"
 
 def call_llm(prompt: str) -> str:
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 500,
-            "temperature": 0.1,
-            "top_p": 0.95,
-            "return_full_text": False
-        }
-    }
+    client = get_llm_client()
     for attempt in range(3):
         try:
-            response = requests.post(
-                HF_API_URL,
-                headers=HF_HEADERS,
-                json=payload,
-                timeout=60
+            result = client.text_generation(
+                prompt,
+                model=LLM_MODEL,
+                max_new_tokens=500,
+                temperature=0.1,
+                top_p=0.95,
+                do_sample=True,
             )
+            return result.strip()
 
-            if not response.ok:
-                if response.status_code == 503:
-                    st.warning(f"⏳ LLM loading, retrying... (attempt {attempt+1}/3)")
-                    time.sleep(15)
-                    continue
-                if response.status_code == 401:
-                    st.error("❌ Invalid HuggingFace API key.")
-                    st.stop()
-                st.error(f"❌ LLM API error — Status {response.status_code}: {response.text}")
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "loading" in err.lower():
+                st.warning(f"⏳ LLM loading, retrying... ({attempt+1}/3)")
+                time.sleep(15)
+                continue
+            if "401" in err:
+                st.error("❌ Invalid HuggingFace API key.")
                 st.stop()
-
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                return result[0].get("generated_text", "").strip()
-
-            return "I cannot find this information in the document."
-
-        except requests.exceptions.Timeout:
-            st.warning(f"⏳ LLM request timed out, retrying... (attempt {attempt+1}/3)")
-            time.sleep(10)
+            st.error(f"❌ LLM error: {err}")
+            st.stop()
 
     return "❌ LLM failed to respond after 3 retries. Please try again."
 
