@@ -1,6 +1,7 @@
 import os
 import time
 import tempfile
+import numpy as np
 import streamlit as st
 from dotenv import load_dotenv
 from typing import List
@@ -44,56 +45,55 @@ if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
     st.stop()
 
 # --------------------------------------------------
+# HF CLIENT — single global instance, no serialization issues
+# --------------------------------------------------
+hf_client = InferenceClient(
+    provider="hf-inference",
+    api_key=HUGGINGFACE_API_KEY
+)
+
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+LLM_MODEL = "HuggingFaceH4/zephyr-7b-beta"
+
+# --------------------------------------------------
 # CUSTOM EMBEDDING CLASS
-# Uses huggingface_hub InferenceClient — correct 2025 API
+# No __init__ args — uses global hf_client, no caching issues
 # --------------------------------------------------
 class HFInferenceEmbeddings(Embeddings):
-    def __init__(self, api_key: str):
-        self.client = InferenceClient(
-            provider="hf-inference",
-            api_key=api_key
-        )
-        self.model = "sentence-transformers/all-MiniLM-L6-v2"
 
-def _embed(self, texts: List[str]) -> List[List[float]]:
-    for attempt in range(3):
-        try:
-            result = self.client.feature_extraction(
-                texts,
-                model=self.model
-            )
+    def _embed(self, texts: List[str]) -> List[List[float]]:
+        for attempt in range(3):
+            try:
+                result = hf_client.feature_extraction(
+                    texts,
+                    model=EMBEDDING_MODEL
+                )
+                arr = np.array(result)
 
-            import numpy as np
-            # Convert numpy array to plain Python floats for Pinecone
-            arr = np.array(result)
+                # If 3D (batch, seq, dim) — mean pool over token dimension
+                if arr.ndim == 3:
+                    arr = arr.mean(axis=1)
 
-            # If 3D (batch, seq, dim) — mean pool over token dimension
-            if arr.ndim == 3:
-                arr = arr.mean(axis=1)
+                # Convert to plain Python floats — required for Pinecone serialization
+                return arr.tolist()
 
-            # Convert to plain Python list of lists of floats
-            return arr.tolist()
-
-        except Exception as e:
-            err = str(e)
-            if "503" in err or "loading" in err.lower():
-                st.warning(f"⏳ Embedding model loading, retrying... ({attempt+1}/3)")
-                time.sleep(10)
-                continue
-            if "401" in err:
-                st.error("❌ Invalid HuggingFace API key. Check your HUGGINGFACE_API_KEY secret.")
-                st.stop()
-            if "403" in err:
-                st.error("❌ Access denied to embedding model.")
-                st.stop()
+            except Exception as e:
+                err = str(e)
+                if "503" in err or "loading" in err.lower():
+                    st.warning(f"⏳ Embedding model loading, retrying... ({attempt+1}/3)")
+                    time.sleep(10)
+                    continue
+                if "401" in err:
+                    st.error("❌ Invalid HuggingFace API key. Check HUGGINGFACE_API_KEY in Streamlit Secrets.")
+                    st.stop()
+                if "403" in err:
+                    st.error("❌ Access denied to embedding model.")
+                    st.stop()
                 st.error(f"❌ Embedding error: {err}")
                 st.stop()
 
-                st.error("❌ Embedding model failed after 3 retries. Please try again.")
-                st.stop()
-
-                st.error("❌ Embedding model failed after 3 retries. Please try again.")
-                st.stop()
+        st.error("❌ Embedding model failed after 3 retries. Please try again in a minute.")
+        st.stop()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         all_embeddings = []
@@ -156,7 +156,7 @@ if st.session_state.active_pdf != pdf_namespace:
 # --------------------------------------------------
 @st.cache_resource
 def load_vectorstore(pdf_bytes: bytes, namespace: str):
-    embeddings = HFInferenceEmbeddings(api_key=HUGGINGFACE_API_KEY)
+    embeddings = HFInferenceEmbeddings()
 
     if namespace in existing_namespaces:
         return PineconeVectorStore.from_existing_index(
@@ -194,22 +194,12 @@ retriever = vectorstore.as_retriever(
 )
 
 # --------------------------------------------------
-# LLM — Zephyr-7B via InferenceClient
+# LLM
 # --------------------------------------------------
-@st.cache_resource
-def get_llm_client():
-    return InferenceClient(
-        provider="hf-inference",
-        api_key=HUGGINGFACE_API_KEY
-    )
-
-LLM_MODEL = "HuggingFaceH4/zephyr-7b-beta"
-
 def call_llm(prompt: str) -> str:
-    client = get_llm_client()
     for attempt in range(3):
         try:
-            result = client.text_generation(
+            result = hf_client.text_generation(
                 prompt,
                 model=LLM_MODEL,
                 max_new_tokens=500,
