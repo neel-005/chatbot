@@ -139,7 +139,7 @@ retriever = vectorstore.as_retriever(
 # LLM
 # --------------------------------------------------
 llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
     task="text-generation",
     temperature=0.1,
     max_new_tokens=500,
