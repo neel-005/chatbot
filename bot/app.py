@@ -48,7 +48,7 @@ if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
 # --------------------------------------------------
 class HFInferenceEmbeddings(Embeddings):
     def __init__(self, api_key: str):
-        self.api_url = "https://api-inference.huggingface.co/pipeline/feature-extraction/BAAI/bge-small-en-v1.5"
+        self.api_url = "https://router.huggingface.co/pipeline/feature-extraction/BAAI/bge-small-en-v1.5"
         self.headers = {"Authorization": f"Bearer {api_key}"}
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
