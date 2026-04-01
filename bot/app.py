@@ -5,14 +5,10 @@ from dotenv import load_dotenv
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import (
-    HuggingFaceEmbeddings,
-    HuggingFaceEndpoint,
-    ChatHuggingFace
-)
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_pinecone import PineconeVectorStore
-from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone, ServerlessSpec
+from huggingface_hub import InferenceClient
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -138,14 +134,9 @@ retriever = vectorstore.as_retriever(
 # --------------------------------------------------
 # LLM
 # --------------------------------------------------
-llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-    task="text-generation",
-    temperature=0.1,
-    max_new_tokens=500,
-    repetition_penalty=1.15,
-    top_p=0.95,
-    huggingfacehub_api_token=HUGGINGFACE_API_KEY
+client = InferenceClient(
+    model="mistralai/Mistral-7B-Instruct-v0.3",
+    token=HUGGINGFACE_API_KEY
 )
 
 # --------------------------------------------------
@@ -187,14 +178,17 @@ def answer_question(question, retriever):
 
     context = "\n---\n".join(context_parts)
 
-    full_prompt = f"""<s>[INST] {SYSTEM_PROMPT}
+    response = client.chat_completion(
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
+        ],
+        max_tokens=500,
+        temperature=0.1,
+        top_p=0.95,
+    )
 
-Context:
-{context}
-
-Question: {question} [/INST]"""
-
-    answer = llm.invoke(full_prompt).strip()
+    answer = response.choices[0].message.content.strip()
 
     if answer.startswith("Answer:"):
         answer = answer[7:].strip()
