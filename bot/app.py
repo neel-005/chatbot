@@ -55,38 +55,42 @@ class HFInferenceEmbeddings(Embeddings):
         )
         self.model = "sentence-transformers/all-MiniLM-L6-v2"
 
-    def _embed(self, texts: List[str]) -> List[List[float]]:
-        for attempt in range(3):
-            try:
-                result = self.client.feature_extraction(
-                    texts,
-                    model=self.model
-                )
-                # result is a numpy array of shape (batch, dim) or (batch, seq, dim)
-                embeddings = []
-                for vec in result:
-                    # If 2D token-level output, mean pool
-                    if hasattr(vec[0], '__iter__'):
-                        pooled = [sum(col) / len(col) for col in zip(*vec)]
-                        embeddings.append(pooled)
-                    else:
-                        embeddings.append(list(vec))
-                return embeddings
+def _embed(self, texts: List[str]) -> List[List[float]]:
+    for attempt in range(3):
+        try:
+            result = self.client.feature_extraction(
+                texts,
+                model=self.model
+            )
 
-            except Exception as e:
-                err = str(e)
-                if "503" in err or "loading" in err.lower():
-                    st.warning(f"⏳ Embedding model loading, retrying... ({attempt+1}/3)")
-                    time.sleep(10)
-                    continue
-                if "401" in err:
-                    st.error("❌ Invalid HuggingFace API key. Check your HUGGINGFACE_API_KEY secret.")
-                    st.stop()
-                if "403" in err:
-                    st.error("❌ Access denied to embedding model.")
-                    st.stop()
-                st.error(f"❌ Embedding error: {err}")
+            import numpy as np
+            # Convert numpy array to plain Python floats for Pinecone
+            arr = np.array(result)
+
+            # If 3D (batch, seq, dim) — mean pool over token dimension
+            if arr.ndim == 3:
+                arr = arr.mean(axis=1)
+
+            # Convert to plain Python list of lists of floats
+            return arr.tolist()
+
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "loading" in err.lower():
+                st.warning(f"⏳ Embedding model loading, retrying... ({attempt+1}/3)")
+                time.sleep(10)
+                continue
+            if "401" in err:
+                st.error("❌ Invalid HuggingFace API key. Check your HUGGINGFACE_API_KEY secret.")
                 st.stop()
+            if "403" in err:
+                st.error("❌ Access denied to embedding model.")
+                st.stop()
+            st.error(f"❌ Embedding error: {err}")
+            st.stop()
+
+    st.error("❌ Embedding model failed after 3 retries. Please try again.")
+    st.stop()
 
         st.error("❌ Embedding model failed after 3 retries. Please try again.")
         st.stop()
