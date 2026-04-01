@@ -53,7 +53,7 @@ hf_client = InferenceClient(
 )
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-LLM_MODEL = "HuggingFaceH4/zephyr-7b-beta"
+LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # --------------------------------------------------
 # CUSTOM EMBEDDING CLASS
@@ -195,19 +195,19 @@ retriever = vectorstore.as_retriever(
 
 # --------------------------------------------------
 # LLM
-# --------------------------------------------------
-def call_llm(prompt: str) -> str:
+# --------------------------------------------------def call_llm(prompt: str) -> str:
     for attempt in range(3):
         try:
-            result = hf_client.text_generation(
-                prompt,
+            result = hf_client.chat_completion(
                 model=LLM_MODEL,
-                max_new_tokens=500,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
                 temperature=0.1,
-                top_p=0.95,
-                do_sample=True,
             )
-            return result.strip()
+            return result.choices[0].message.content.strip()
 
         except Exception as e:
             err = str(e)
@@ -246,8 +246,7 @@ OUTPUT FORMAT:
 
 # --------------------------------------------------
 # ANSWER FUNCTION
-# --------------------------------------------------
-def answer_question(question: str, retriever) -> str:
+# --------------------------------------------------def answer_question(question: str, retriever) -> str:
     docs = retriever.invoke(question)
 
     if not docs:
@@ -263,28 +262,20 @@ def answer_question(question: str, retriever) -> str:
 
     context = "\n---\n".join(context_parts)
 
-    # Zephyr instruct format
-    prompt = (
-        f"<|system|>\n{SYSTEM_PROMPT}</s>\n"
-        f"<|user|>\nContext:\n{context}\n\nQuestion: {question}</s>\n"
-        f"<|assistant|>"
-    )
+    # Pass context + question as the user message
+    user_message = f"Context:\n{context}\n\nQuestion: {question}"
 
-    answer = call_llm(prompt)
+    answer = call_llm(user_message)
 
     if answer.startswith("Answer:"):
         answer = answer[7:].strip()
 
-    not_found_phrases = [
-        "cannot find", "not found", "no information",
-        "not mentioned", "not available"
-    ]
+    not_found_phrases = ["cannot find", "not found", "no information", "not mentioned", "not available"]
     if any(p in answer.lower() for p in not_found_phrases):
         return "I cannot find this information in the document."
 
     pages = sorted(page_set)
     source_info = f"\n\n📄 **Source:** Page(s) {', '.join(map(str, pages[:3]))}"
-
     return answer + source_info
 
 # --------------------------------------------------
