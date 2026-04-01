@@ -183,7 +183,8 @@ prompt = ChatPromptTemplate.from_messages(
 
 # --------------------------------------------------
 # ANSWER FUNCTION
-# --------------------------------------------------def answer_question(question, retriever):
+# --------------------------------------------------
+def answer_question(question, retriever):
     docs = retriever.invoke(question)
 
     if not docs:
