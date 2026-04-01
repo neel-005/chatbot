@@ -10,3 +10,7 @@ langchain-pinecone
 
 pinecone
 sentence-transformers
+
+
+pinecone-client
+huggingface-hub
