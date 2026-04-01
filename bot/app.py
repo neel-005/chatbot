@@ -183,8 +183,7 @@ prompt = ChatPromptTemplate.from_messages(
 
 # --------------------------------------------------
 # ANSWER FUNCTION
-# --------------------------------------------------
-def answer_question(question, retriever):
+# --------------------------------------------------def answer_question(question, retriever):
     docs = retriever.invoke(question)
 
     if not docs:
@@ -200,9 +199,9 @@ def answer_question(question, retriever):
 
     context = "\n---\n".join(context_parts)
 
-    response = llm.invoke(
-        prompt.format(context=context, question=question)
-    )
+    # FIXED: invoke the chain properly instead of passing a pre-formatted string
+    chain = prompt | llm
+    response = chain.invoke({"context": context, "question": question})
 
     answer = response.content.strip()
 
