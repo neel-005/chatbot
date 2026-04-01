@@ -48,7 +48,7 @@ if not PINECONE_API_KEY or not HUGGINGFACE_API_KEY:
 # --------------------------------------------------
 class HFInferenceEmbeddings(Embeddings):
     def __init__(self, api_key: str):
-        self.api_url = "https://router.huggingface.co/pipeline/feature-extraction/BAAI/bge-small-en-v1.5"
+        self.api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
         self.headers = {"Authorization": f"Bearer {api_key}"}
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
@@ -195,7 +195,7 @@ retriever = vectorstore.as_retriever(
 # --------------------------------------------------
 # LLM — Zephyr-7B (free on HuggingFace)
 # --------------------------------------------------
-HF_API_URL = "https://router.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
 HF_HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
 
 def call_llm(prompt: str) -> str:
